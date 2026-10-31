@@ -1,0 +1,8 @@
+# The human voice: Resemble AI's Chatterbox (MIT licence), in its own Python environment.
+# Locked with:
+#   uv pip compile macos/voice/requirements.in --excludes macos/voice/excludes.txt --python-version 3.13
+#     --python-platform aarch64-apple-darwin --only-binary :all: --generate-hashes -o macos/voice/requirements-py313.txt
+# (and the same with 3.12). Every file is checked against its SHA-256 hash when installed.
+chatterbox-tts==0.1.7
+# Perth, Chatterbox's audio watermark, still uses pkg_resources, which setuptools 81 dropped
+setuptools==80.9.0

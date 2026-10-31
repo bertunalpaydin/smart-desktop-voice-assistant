@@ -1,0 +1,6 @@
+# Chatterbox lists these, but speaking English with Chatterbox-Turbo never uses them:
+gradio
+spacy-pkuseg
+pykakasi
+# s3tokenizer lists its developers' commit-hook tool as a dependency by mistake
+pre-commit

@@ -1,0 +1,19 @@
+# What Jarvis needs on a Mac. install.sh installs the exact versions in
+# requirements-py3XX.txt, which are made from this file with:
+#   uv pip compile requirements.in --python-version 3.13 --python-platform aarch64-apple-darwin \
+#       --only-binary :all: --generate-hashes -o requirements-py313.txt
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+SpeechRecognition
+sounddevice
+PyQt6
+numpy
+onnxruntime
+openwakeword
+psutil
+certifi
+
+# for building Jarvis.app (py2app 0.28.10 was made for setuptools 82)
+py2app==0.28.10
+setuptools==82.0.1

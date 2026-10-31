@@ -1,0 +1,35 @@
+# Login files (Google OAuth client, tokens) never go into git
+secrets/*
+!secrets/.gitkeep
+credentials.json
+token.json
+*.pem
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Logs and reports the installers write on this computer
+macos/install.log
+macos/install_voice.log
+macos/diagnose.txt
+macos/voice_benchmark.txt
+*.log
+
+# Research data (participants' recordings, results) and generated audio never go into git
+data/
+*.wav
+*.aiff
+*.m4a
+
+# macOS and editors
+.DS_Store
+.idea/
+.vscode/
