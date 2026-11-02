@@ -1,4 +1,6 @@
 import json
+import socket
+import ssl
 import urllib.error
 from datetime import date, datetime, timedelta, timezone
 
@@ -186,7 +188,8 @@ def test_weather_as_data(monkeypatch):
     })
     data = web.weather_data("Bristol")
     assert data == {"place": "Bristol", "temperature": 14, "sky": web.WEATHER_CODES[0], "high": None, "low": None,
-                    "rain": None, "code": 0, "raining": False, "wind": None, "now": None, "days": [], "hours": []}
+                    "rain": None, "code": 0, "raining": False, "wind": None, "now": None, "days": [], "hours": [],
+                    "source": "Open-Meteo"}
     assert web.weather_text(data) == f"Right now in Bristol it's 14 degrees with {web.WEATHER_CODES[0]}."
     assert web.weather_text(dict(data, rain=80)).endswith("There's an 80 percent chance of rain.")
 
@@ -229,6 +232,85 @@ def test_news_feed_limits_and_total_failure(monkeypatch):
         web.news_items([("Outlet", "World", "https://nothing")])
 
 
+def test_when_no_feed_answers_the_error_says_why(monkeypatch):
+    def get(url, headers=None):
+        raise web.WebError(f"{url}: <urlopen error timed out>", "it took too long to answer")
+
+    monkeypatch.setattr(web, "_get", get)
+    with pytest.raises(web.WebError) as error:
+        web.news_items([("A", "World", "https://a"), ("B", "World", "https://b")])
+    assert error.value.reason == "it took too long to answer"
+    assert "https://a: <urlopen error timed out>" in str(error.value) and "https://b" in str(error.value)
+
+
+class Answer:
+    def __init__(self, text):
+        self.text = text
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self.text.encode()
+
+
+def flaky(monkeypatch, *outcomes):
+    """urlopen gives `outcomes` in turn: an exception is raised, text is the page. Returns the calls."""
+    calls = []
+
+    def urlopen(request, timeout):
+        calls.append(request.full_url)
+        outcome = outcomes[min(len(calls), len(outcomes)) - 1]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return Answer(outcome)
+
+    monkeypatch.setattr(web.urllib.request, "urlopen", urlopen)
+    return calls
+
+
+def http_error(code):
+    return urllib.error.HTTPError("https://api.open-meteo.com/v1/forecast", code, "error", {}, None)
+
+
+def test_a_request_that_times_out_is_tried_once_more(monkeypatch):
+    calls = flaky(monkeypatch, urllib.error.URLError(TimeoutError("timed out")), "page")
+    assert web._get("https://api.open-meteo.com/v1/forecast") == "page"
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("error, tries, reason", [
+    (urllib.error.URLError(TimeoutError("timed out")), 2, "it took too long to answer"),
+    (TimeoutError("The read operation timed out"), 2, "it took too long to answer"),
+    (urllib.error.URLError(socket.gaierror(8, "nodename nor servname provided")), 2, "there's no internet connection"),
+    (urllib.error.URLError(ConnectionResetError(54, "Connection reset by peer")), 2, "the connection dropped"),
+    (http_error(503), 2, "the service is having problems"),
+    (http_error(429), 2, "it's had too many requests just now"),
+    (http_error(400), 1, "it refused the request (error 400)"),
+    (urllib.error.URLError(ssl.SSLCertVerificationError(1, "certificate verify failed: unable to get local issuer "
+                                                            "certificate")), 1,
+     "the connection's security certificate wasn't trusted"),
+    (urllib.error.URLError("no internet"), 2, "it didn't answer"),
+])
+def test_failed_requests_say_why(monkeypatch, error, tries, reason):
+    calls = flaky(monkeypatch, error)
+    with pytest.raises(web.WebError) as failed:
+        web._get("https://api.open-meteo.com/v1/forecast?x=1")
+    assert len(calls) == tries
+    assert failed.value.reason == reason
+    assert str(failed.value).startswith("api.open-meteo.com: ")  # the details, for the log
+
+
+def test_bad_replies_say_why(monkeypatch):
+    monkeypatch.setattr(web, "_get", lambda url, headers=None: "<html>")
+    with pytest.raises(web.WebError) as failed:
+        web.weather_data("Bristol")
+    assert failed.value.reason == "it sent a reply Jarvis couldn't read"
+
+
 @pytest.mark.parametrize("link, default, section", [
     ("https://www.bbc.co.uk/news/world-europe-1", "Top stories", "World"),
     ("https://www.theguardian.com/politics/2026/oct/07/x", "Top stories", "Politics"),
@@ -239,3 +321,153 @@ def test_news_feed_limits_and_total_failure(monkeypatch):
 ])
 def test_news_sections_come_from_the_address(link, default, section):
     assert web._section(link, default) == section
+
+
+BRISTOL = {"name": "Bristol", "latitude": 51.45523, "longitude": -2.59661, "elevation": 11.0,
+           "timezone": "Europe/London"}
+
+
+def met_sample(start=datetime(2026, 11, 2, 15, tzinfo=timezone.utc)):
+    """MET Norway's forecast as it comes: hourly for two days, then every 6 hours, in UTC."""
+    series = []
+    for n in range(48):
+        when = start + timedelta(hours=n)
+        symbol = "lightrain_day" if when.date() == date(2026, 11, 3) and 9 <= when.hour < 15 else "cloudy"
+        series.append({"time": when.strftime("%Y-%m-%dT%H:%M:%SZ"), "data": {
+            "instant": {"details": {"air_temperature": 8.0 + n % 6, "wind_speed": 4.0 + n % 3}},
+            "next_1_hours": {"summary": {"symbol_code": symbol},
+                             "details": {"precipitation_amount": 0.4 if n == 0 else 0.0,
+                                         "probability_of_precipitation": 60.4 if symbol.startswith("lightrain") else 3.0}},
+            "next_6_hours": {"summary": {"symbol_code": "cloudy"},
+                             "details": {"air_temperature_max": 14.2, "air_temperature_min": 7.6}}}})
+    for n in range(48, 8 * 24, 6):
+        when = start + timedelta(hours=n)
+        series.append({"time": when.strftime("%Y-%m-%dT%H:%M:%SZ"), "data": {
+            "instant": {"details": {"air_temperature": 5.0, "wind_speed": 2.0}},
+            "next_6_hours": {"summary": {"symbol_code": "heavysnowshowers_night"},
+                             "details": {"air_temperature_max": 6.0, "air_temperature_min": 1.0,
+                                         "probability_of_precipitation": 80.0}}}})
+    return {"type": "Feature", "properties": {"timeseries": series}}
+
+
+def test_the_weather_comes_from_met_norway_when_open_meteo_is_down(monkeypatch, capsys):
+    asked = fake_pages(monkeypatch, {
+        "https://geocoding-api.open-meteo.com/": {"results": [BRISTOL]},
+        "https://api.met.no/weatherapi/locationforecast/2.0/complete": met_sample(),
+    })  # api.open-meteo.com doesn't answer
+    data = web.weather_data("Bristol")
+    assert data["source"] == "MET Norway" and data["place"] == "Bristol"
+    assert data["temperature"] == 8 and data["code"] == 3 and data["sky"] == "overcast skies"
+    assert data["raining"] is True and data["wind"] == 9  # 4 m/s
+    assert data["now"].tzinfo is None
+    met = [(url, headers) for url, headers in asked if "api.met.no" in url]
+    assert met == [("https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=51.4552&lon=-2.5966&altitude=11",
+                    {"User-Agent": web.MET_USER_AGENT})]
+    assert "the weather came from MET Norway" in capsys.readouterr().err
+
+    days = data["days"]
+    assert [d["date"] for d in days] == [date(2026, 11, 2) + timedelta(days=n) for n in range(8)]
+    tomorrow = days[1]
+    assert tomorrow["code"] == 61 and tomorrow["sky"] == "light rain" and tomorrow["rain"] == 60
+    assert (tomorrow["low"], tomorrow["high"]) == (8, 14) and tomorrow["wind"] == 13  # 6 m/s
+    assert tomorrow["sunrise"] == datetime(2026, 11, 3, 7, 7) and tomorrow["sunset"] == datetime(2026, 11, 3, 16, 40)
+    assert days[4]["code"] == 86 and days[4]["rain"] == 80 and (days[4]["low"], days[4]["high"]) == (1, 6)
+    assert days[4]["snow"] is None  # MET Norway gives no snowfall; the snow code says it
+    hours = [h for h in data["hours"] if h["time"].date() == date(2026, 11, 3)]
+    assert hours[0]["time"] == datetime(2026, 11, 3, 0, 0) and len(hours) == 24  # Bristol's time (GMT)
+    assert [h["code"] for h in hours if h["rain"] == 60] == [61] * 6
+
+
+def test_met_norway_times_are_the_places_own(monkeypatch):
+    tokyo = dict(BRISTOL, name="Tokyo", latitude=35.6895, longitude=139.6917, timezone="Asia/Tokyo")
+    fake_pages(monkeypatch, {"https://geocoding-api.open-meteo.com/": {"results": [tokyo]},
+                             "https://api.met.no/": met_sample()})
+    data = web.weather_data("Tokyo")
+    assert data["days"][0]["date"] == date(2026, 11, 3)  # 15:00 UTC is midnight in Tokyo
+    assert data["hours"][0]["time"] == datetime(2026, 11, 3, 0, 0)
+
+
+def test_when_both_weather_services_fail_the_first_reason_is_given(monkeypatch):
+    def get(url, headers=None):
+        if url.startswith("https://geocoding-api.open-meteo.com/"):
+            return json.dumps({"results": [BRISTOL]})
+        if url.startswith("https://api.open-meteo.com/"):
+            raise web.WebError("api.open-meteo.com: HTTP Error 503: Service Unavailable", "the service is having problems")
+        raise web.WebError("api.met.no: <urlopen error timed out>", "it took too long to answer")
+
+    monkeypatch.setattr(web, "_get", get)
+    with pytest.raises(web.WebError) as failed:
+        web.weather_data("Bristol")
+    assert failed.value.reason == "the service is having problems"
+    assert str(failed.value) == ("api.open-meteo.com: HTTP Error 503: Service Unavailable; "
+                                 "MET Norway: api.met.no: <urlopen error timed out>")
+
+
+def test_met_norway_needs_the_places_time_zone(monkeypatch):
+    fake_pages(monkeypatch, {"https://geocoding-api.open-meteo.com/": {"results": [dict(BRISTOL, timezone=None)]},
+                             "https://api.met.no/": met_sample()})
+    with pytest.raises(web.WebError):
+        web.weather_data("Bristol")
+
+
+@pytest.mark.parametrize("reply", [{}, {"properties": {"timeseries": []}}, [],
+                                   {"properties": {"timeseries": [{"time": "x"}, {"time": "2026-11-02T15:00:00Z"}]}}])
+def test_met_norway_without_data(monkeypatch, reply):
+    fake_pages(monkeypatch, {"https://geocoding-api.open-meteo.com/": {"results": [BRISTOL]},
+                             "https://api.met.no/": reply})
+    with pytest.raises(web.WebError):
+        web.weather_data("Bristol")
+
+
+@pytest.mark.parametrize("symbol, code", [
+    ("clearsky_day", 0), ("fair_night", 1), ("partlycloudy_polartwilight", 2), ("cloudy", 3), ("fog", 45),
+    ("lightrain", 61), ("heavyrainshowers_day", 82), ("lightsleet", 68), ("sleetshowers_night", 84),
+    ("snow", 73), ("heavysnowshowers_day", 86), ("rainandthunder", 95), ("lightssnowshowersandthunder_day", 95),
+    ("something_new", None), ("", None), (None, None),
+])
+def test_met_norway_symbols(symbol, code):
+    assert web.met_code(symbol) == code
+    assert code is None or code in web.WEATHER_CODES
+
+
+def test_a_place_found_once_is_remembered(monkeypatch):
+    asked = fake_pages(monkeypatch, {"https://geocoding-api.open-meteo.com/": {"results": [BRISTOL]}})
+    assert web._place("Bristol") == web._place(" bristol ") == BRISTOL
+    assert len(asked) == 1
+    fake_pages(monkeypatch, {"https://geocoding-api.open-meteo.com/": {}})
+    assert web._place("Nowhere") is None and web._place("Bristol") == BRISTOL
+
+
+@pytest.mark.parametrize("day, place, zone, sunrise, sunset", [
+    (date(2024, 6, 21), (51.5074, -0.1278), "Europe/London", datetime(2024, 6, 21, 4, 43), datetime(2024, 6, 21, 21, 22)),
+    (date(2024, 12, 21), (51.5074, -0.1278), "Europe/London", datetime(2024, 12, 21, 8, 4),
+     datetime(2024, 12, 21, 15, 54)),
+    (date(2026, 11, 2), (35.6895, 139.6917), "Asia/Tokyo", datetime(2026, 11, 2, 6, 3), datetime(2026, 11, 2, 16, 46)),
+    (date(2026, 11, 2), (34.0522, -118.2437), "America/Los_Angeles", datetime(2026, 11, 2, 6, 13),
+     datetime(2026, 11, 2, 17, 1)),
+    (date(2026, 11, 2), (-33.8679, 151.2073), "Australia/Sydney", datetime(2026, 11, 2, 5, 55),
+     datetime(2026, 11, 2, 19, 24)),
+])
+def test_sunrise_and_sunset(day, place, zone, sunrise, sunset):
+    rise, set_ = web.sun_times(day, *place, web.zoneinfo.ZoneInfo(zone))
+    assert abs((rise - sunrise).total_seconds()) <= 120 and abs((set_ - sunset).total_seconds()) <= 120
+
+
+def test_no_sunrise_in_the_polar_night_or_sunset_under_the_midnight_sun():
+    oslo = web.zoneinfo.ZoneInfo("Europe/Oslo")
+    assert web.sun_times(date(2026, 12, 21), 69.6496, 18.956, oslo) == (None, None)
+    assert web.sun_times(date(2026, 6, 21), 69.6496, 18.956, oslo) == (None, None)
+
+
+def test_weather_questions_are_answered_from_met_norway_too(monkeypatch):
+    from jarvis import forecast
+
+    fake_pages(monkeypatch, {"https://geocoding-api.open-meteo.com/": {"results": [BRISTOL]},
+                             "https://api.met.no/": met_sample()})
+    data = web.weather_data("Bristol")
+    assert forecast.answer(data, "will it rain tomorrow") == \
+        "Yes, probably. There's a 60 percent chance of rain in Bristol tomorrow."
+    assert forecast.answer(data, "will it snow on friday") == \
+        "Yes, snow is expected in Bristol on Friday: heavy snow showers, between 1 and 6 degrees."
+    assert forecast.answer(data, "when is sunset tomorrow").startswith("Tomorrow, the sun sets in Bristol at 4:40")
+    assert forecast.answer(data, "how windy is it") == "The wind in Bristol is 9 miles per hour right now."

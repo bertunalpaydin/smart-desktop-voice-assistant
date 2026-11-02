@@ -69,6 +69,7 @@ APP_NAME = "Jarvis"
 GMAIL_URL = "https://mail.google.com/"
 VOICE_SAMPLE = "This is how I will sound."
 IDLE_TEXT = f'Say "Hey Jarvis" or press {config.HOTKEY_LABEL}'
+DASHBOARD_RETRY_MINUTES = (1, 2, 5)  # after the weather or news failed to load; then every 15 minutes again
 
 
 def draw_icon(size=64, alert=False):
@@ -438,12 +439,14 @@ class Worker(QObject):
             data = {}
             try:
                 data["weather"] = web.weather_data(config.HOME_CITY)
-            except web.WebError:
-                data["weather_error"] = "The weather service didn't answer. Jarvis will try again soon."
+            except web.WebError as exc:
+                print(f"The weather didn't load: {exc}", file=sys.stderr, flush=True)
+                data["weather_error"] = f"Couldn't get the weather: {exc.reason}. Jarvis will try again shortly."
             try:
                 data["news"] = analysis.brief_news(web.news_items())
-            except web.WebError:
-                data["news_error"] = "The news feeds didn't answer. Jarvis will try again soon."
+            except web.WebError as exc:
+                print(f"The news didn't load: {exc}", file=sys.stderr, flush=True)
+                data["news_error"] = f"Couldn't get the news: {exc.reason}. Jarvis will try again shortly."
             if with_mail:
                 try:
                     data["mail"] = analysis.brief_mail(self._gmail().unread())
@@ -1476,8 +1479,12 @@ class TrayApp(QObject):
         self.hide_timer.setSingleShot(True)
         self.hide_timer.timeout.connect(self._hide_jarvis_if_unused)
         self.dashboard_timer = QTimer(self)
-        self.dashboard_timer.timeout.connect(lambda: self.refresh_dashboard() if self.hud.isVisible() else None)
+        self.dashboard_timer.timeout.connect(self._timed_dashboard)
         self.dashboard_timer.start(15 * 60 * 1000)
+        self.dashboard_retry = QTimer(self)  # soon after the weather or news failed to load
+        self.dashboard_retry.setSingleShot(True)
+        self.dashboard_retry.timeout.connect(lambda: self.refresh_dashboard() if self.hud.isVisible() else None)
+        self.dashboard_retries = 0
 
     def _connect_worker(self):
         r, w = self.requests, self.worker
@@ -1498,7 +1505,7 @@ class TrayApp(QObject):
         r.recognize.connect(w.recognize)
         r.dashboard.connect(w.refresh_dashboard)
         w.audio_busy.connect(self._on_audio_busy)
-        w.dashboard_ready.connect(lambda data: self.hud.update_data(data))
+        w.dashboard_ready.connect(self._on_dashboard)
         w.busy.connect(self._on_busy)
         w.failed.connect(self._on_failed)
         w.checked.connect(self._on_checked)
@@ -1665,6 +1672,21 @@ class TrayApp(QObject):
     def refresh_dashboard(self):
         self.dashboard_loaded = datetime.now()
         self.requests.dashboard.emit(not self.paused)
+
+    def _timed_dashboard(self):
+        self.dashboard_retries = 0
+        if self.hud.isVisible():
+            self.refresh_dashboard()
+
+    def _on_dashboard(self, data):
+        self.hud.update_data(data)
+        if "weather_error" in data or "news_error" in data:
+            self.dashboard_loaded = None  # opening the HUD tries again
+            if self.dashboard_retries < len(DASHBOARD_RETRY_MINUTES):
+                self.dashboard_retry.start(DASHBOARD_RETRY_MINUTES[self.dashboard_retries] * 60 * 1000)
+                self.dashboard_retries += 1
+        elif "weather" in data or "news" in data:
+            self.dashboard_retries = 0
 
     def _hide_jarvis_if_unused(self):
         window = self.jarvis_window

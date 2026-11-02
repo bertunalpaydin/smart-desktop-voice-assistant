@@ -89,10 +89,18 @@ def test_weather(window):
                                     "rain": 70}})
     assert window.temperature.text() == "14\u00b0" and window.sky.text() == "Light rain in Bristol"
     assert window.weather_more.text() == "High 15\u00b0  Low 9\u00b0    Rain 70%"
+    window.update_data({"weather": {"place": "Bristol", "temperature": 14, "sky": "light rain", "high": 15, "low": 9,
+                                    "rain": 70, "source": "MET Norway"}})  # when Open-Meteo didn't answer
+    assert window.weather_more.text() == "High 15\u00b0  Low 9\u00b0    Rain 70%    from MET Norway"
+    window.update_data({"weather_error": "Couldn't get the weather: it took too long to answer."})
+    assert window.temperature.text() == "14\u00b0" and window.sky.text() == "Light rain in Bristol"  # still shown
+    assert window.weather_more.text().startswith("Last updated at ")
+    assert window.weather_more.text().endswith(". Couldn't get the weather: it took too long to answer.")
     window.update_data({"weather": None})
     assert window.temperature.text() == "--" and config.HOME_CITY in window.sky.text()
-    window.update_data({"weather_error": "The weather service didn't answer."})
-    assert window.sky.text() == "The weather service didn't answer."
+    assert window.weather_more.text() == ""
+    window.update_data({"weather_error": "Couldn't get the weather: it took too long to answer."})
+    assert window.sky.text() == "Couldn't get the weather: it took too long to answer."
 
 
 def test_the_inbox(window):

@@ -176,7 +176,7 @@ _USUAL = (
     "I'm Jarvis: Just A Rather Very Intelligent System, at your service.",
     "Sorry, I don't know how to do that yet. Say help to hear what I can do.",
     "You have no alarms, timers or reminders.", "You have no unread email.",
-    "I couldn't reach the internet just now. Try again in a moment.",
+    "I couldn't get that from the internet, because there's no internet connection. Try again in a moment.",
     "For when? Say something like: set an alarm for 7 am.",
     "How long? Say something like: set a timer for 10 minutes.",
 )
@@ -304,8 +304,8 @@ class Assistant:
                 continue
             try:
                 reply = getattr(self, f"_{intent}")(command, match)
-            except web.WebError:
-                return Reply("I couldn't reach the internet just now. Try again in a moment.")
+            except web.WebError as exc:
+                return Reply(f"I couldn't get that from the internet, because {exc.reason}. Try again in a moment.")
             except system.Unavailable as exc:
                 return Reply(str(exc))
             except PowerShellError as exc:

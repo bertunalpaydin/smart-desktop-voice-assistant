@@ -7,8 +7,8 @@ import re
 from . import alarms
 from .web import WEATHER_CODES, a_or_an, weather_text
 
-RAIN_CODES = frozenset({51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99})
-SNOW_CODES = frozenset({71, 73, 75, 77, 85, 86})
+RAIN_CODES = frozenset({51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 68, 69, 80, 81, 82, 83, 84, 95, 96, 99})
+SNOW_CODES = frozenset({68, 69, 71, 73, 75, 77, 83, 84, 85, 86})  # sleet (68, 69, 83, 84) is rain and snow
 PARTS = {"morning": (6, 12), "afternoon": (12, 18), "evening": (18, 23), "night": (18, 24)}
 
 # words that end a place's name ("in London tomorrow") or show that what follows "in" is no place

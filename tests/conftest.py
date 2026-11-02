@@ -5,7 +5,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # the window tests need no screen
 
-from jarvis import config  # noqa: E402
+from jarvis import config, web  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -18,6 +18,8 @@ def isolated_config(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "OLD_APP_DIR", tmp_path / "mail-assistant")
     monkeypatch.setattr(config, "ALARMS_FILE", tmp_path / "alarms.json")
     monkeypatch.setattr(config, "NOTES_FILE", tmp_path / "notes.txt")
+    monkeypatch.setattr(web, "RETRY_PAUSE", 0)  # a failed request is tried again at once
+    monkeypatch.setattr(web, "_PLACES", {})  # no place is remembered from another test
     yield
     for name, value in saved.items():
         setattr(config, name, value)

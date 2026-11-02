@@ -503,9 +503,10 @@ def test_not_weather_questions(text):
     assert looked_up == []
 
 
-def test_no_internet_is_said_politely():
-    jarvis, _ = make(web_api=FakeWeb(error=web.WebError("timed out")))
-    assert "couldn't reach the internet" in jarvis.handle("what's the weather").say
+def test_no_internet_is_said_politely_with_the_reason():
+    jarvis, _ = make(web_api=FakeWeb(error=web.WebError("api.open-meteo.com: timed out", "it took too long to answer")))
+    assert jarvis.handle("what's the weather").say == (
+        "I couldn't get that from the internet, because it took too long to answer. Try again in a moment.")
 
 
 def test_windows_only_commands_elsewhere():

@@ -408,6 +408,7 @@ class HudWindow(QWidget):
         self.messages = []
         self.mail = None
         self.news = None
+        self.weather_time = None  # when the weather on screen was fetched
         self.setWindowTitle("Jarvis")
         self.setMinimumSize(1100, 660)
         self.resize(1366, 800)
@@ -577,14 +578,20 @@ class HudWindow(QWidget):
         if "news" in data:
             self.set_news(data["news"])
         for key in ("weather_error", "mail_error", "news_error"):
-            if key in data:
-                {"weather_error": self.sky, "mail_error": self.mail_counts, "news_error": self.news_topics}[key] \
-                    .setText(data[key])
+            if key not in data:
+                continue
+            if key == "weather_error" and self.weather_time:  # keep showing the last weather it got
+                self.weather_more.setText(f"Last updated at {self.weather_time:%H:%M}. {data[key]}")
+                continue
+            {"weather_error": self.sky, "mail_error": self.mail_counts, "news_error": self.news_topics}[key] \
+                .setText(data[key])
 
     def set_weather(self, weather):
+        self.weather_time = datetime.now() if weather else None
         if not weather:
             self.temperature.setText("--")
             self.sky.setText(f"No weather found for {config.HOME_CITY}. Check the city in Settings.")
+            self.weather_more.setText("")
             return
         self.temperature.setText(f"{weather['temperature']}\u00b0")
         self.sky.setText(f"{weather['sky'].capitalize()} in {weather['place']}")
@@ -593,6 +600,8 @@ class HudWindow(QWidget):
             details.append(f"High {weather['high']}\u00b0  Low {weather['low']}\u00b0")
         if weather.get("rain") is not None:
             details.append(f"Rain {weather['rain']}%")
+        if weather.get("source") not in (None, "Open-Meteo"):  # the usual service didn't answer
+            details.append(f"from {weather['source']}")
         self.weather_more.setText("    ".join(details))
 
     def set_mail(self, brief):

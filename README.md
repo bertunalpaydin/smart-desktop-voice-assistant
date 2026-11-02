@@ -174,8 +174,8 @@ The defaults are in `jarvis/config.py`. Changes made in the settings window are 
 - `dictation.py`: turns recorded audio into text with `SpeechRecognition` and Google's speech service, asking for all of its guesses. `commands.best()` then picks the first guess that is a command Jarvis knows, which helps with accents. Without "Hey Jarvis", it records with `sounddevice`, measuring the room noise before the chime so it isn't measuring your voice.
 - `commands.py`: the brain. An ordered list of patterns maps the text to an intent ("timer", "play", "open", ...), and each intent has a small handler. Services such as the web, the computer and Gmail are passed in, so every command is tested with fakes.
 - `alarms.py`: understands times and days ("half past six", "7 am tomorrow", "Friday evening at 8", "next Monday", "in an hour and a half") and keeps alarms, timers and reminders in a JSON file, so they survive a restart. "Next Friday" is next week's Friday; "this Friday" or "on Friday" is the coming one.
-- `forecast.py`: answers weather questions from Open-Meteo's forecast by day and by hour: which place (but not "in the morning" or "for tomorrow"), which day or part of it, and whether the question is really about rain, snow, wind or the sun.
-- `web.py`: YouTube search, Wikipedia's REST API, the Open-Meteo weather API and the RSS feeds of BBC News, The Guardian and Sky News, read in parallel. None of them need an API key.
+- `forecast.py`: answers weather questions from the forecast by day and by hour: which place (but not "in the morning" or "for tomorrow"), which day or part of it, and whether the question is really about rain, snow, wind or the sun.
+- `web.py`: YouTube search, Wikipedia's REST API, the weather and the RSS feeds of BBC News, The Guardian and Sky News, read in parallel. None of them need an API key. The weather comes from [Open-Meteo](https://open-meteo.com/); when it doesn't answer, from [MET Norway](https://api.met.no/) instead (the HUD then says "from MET Norway"), with sunrise and sunset worked out on the computer (NOAA's formula). A request that times out or finds the service busy is tried once more, and the HUD tries again after 1, 2 and 5 minutes, keeping the last weather on screen. Places that were found once are remembered.
 - `analysis.py`: groups headlines about the same story (shared keywords between titles), ranks stories by how many outlets report them and where, and finds the words that keep coming up. For mail it sorts each message into needs a reply, important, update or low priority from Gmail's labels, the importance rules and the wording (questions, requests, deadlines like "by Friday"), and writes the spoken summary. With Claude, it asks for the same as JSON and falls back to the rules for anything missing or malformed.
 - `ai.py`: a small client for Anthropic's Messages API using only the standard library. Errors (bad key, no credit, rate limits, no internet) become plain sentences Jarvis can say.
 - `hud.py`: the HUD, drawn with `QPainter`: the arc reactor, framed panels, meters and the news ticker. `sysinfo.py` reads the processor, memory and battery through Windows' own API (`ctypes`), with no extra package, and through `psutil` on a Mac.
@@ -267,3 +267,7 @@ jarvis/
     windows.py        start with Windows, desktop shortcut
 tests/
 ```
+
+## Credits
+
+Weather data by [Open-Meteo](https://open-meteo.com/) (CC BY 4.0) and, as a fallback, by [MET Norway](https://api.met.no/) (CC BY 4.0). News from the RSS feeds of BBC News, The Guardian and Sky News.

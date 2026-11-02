@@ -231,6 +231,7 @@ def tray(qt, monkeypatch, sounds, fetched):
     controller.alarm_timer.stop()
     controller.hide_timer.stop()
     controller.dashboard_timer.stop()
+    controller.dashboard_retry.stop()
     for window in (controller.inbox_window, controller.compose_dialog, controller.settings_dialog,
                    controller.alarms_window, controller.jarvis_window, controller.hud, *controller.alarm_dialogs):
         if window:
@@ -608,17 +609,40 @@ def test_the_hud_leaves_the_inbox_alone_while_mail_checking_is_paused(tray):
     assert tray.hud.mail is None and tray.hud.temperature.text() == "14\u00b0"
 
 
-def test_the_hud_says_what_failed(tray, monkeypatch):
+def test_the_hud_says_what_failed_and_tries_again_soon(tray, monkeypatch, capsys):
     def offline(*args):
-        raise web.WebError("no internet")
+        raise web.WebError("api.open-meteo.com: <urlopen error timed out>", "it took too long to answer")
 
+    online = app.web.weather_data, app.web.news_items
     monkeypatch.setattr(app.web, "weather_data", offline)
     monkeypatch.setattr(app.web, "news_items", offline)
     tray.gmail.unread = offline
     tray.open_hud()
-    assert "weather service didn't answer" in tray.hud.sky.text()
-    assert "news feeds didn't answer" in tray.hud.news_topics.text()
-    assert tray.hud.mail_counts.text() == "Couldn't load the inbox: no internet"
+    assert tray.hud.sky.text() == "Couldn't get the weather: it took too long to answer. Jarvis will try again shortly."
+    assert tray.hud.news_topics.text() == "Couldn't get the news: it took too long to answer. Jarvis will try again shortly."
+    assert tray.hud.mail_counts.text().startswith("Couldn't load the inbox: api.open-meteo.com")
+    assert "The weather didn't load: api.open-meteo.com: <urlopen error timed out>" in capsys.readouterr().err  # app.log
+    assert tray.dashboard_retry.isActive() and tray.dashboard_retry.interval() == 60 * 1000
+    assert tray.dashboard_loaded is None  # opening the HUD again tries again too
+
+    tray.dashboard_retry.stop()
+    tray.dashboard_retry.timeout.emit()  # a minute later: still offline, so the next try is 2 minutes later
+    assert tray.dashboard_retry.interval() == 2 * 60 * 1000
+    tray.dashboard_retry.stop()
+    tray.dashboard_retry.timeout.emit()
+    assert tray.dashboard_retry.interval() == 5 * 60 * 1000
+    tray.dashboard_retry.stop()
+    tray.dashboard_retry.timeout.emit()  # then only the usual update every 15 minutes
+    assert not tray.dashboard_retry.isActive()
+    tray.dashboard_timer.timeout.emit()
+    assert tray.dashboard_retry.isActive() and tray.dashboard_retry.interval() == 60 * 1000
+    tray.dashboard_retry.stop()
+
+    monkeypatch.setattr(app.web, "weather_data", online[0])  # back online
+    monkeypatch.setattr(app.web, "news_items", online[1])
+    tray.dashboard_timer.timeout.emit()
+    assert tray.hud.temperature.text() == "14\u00b0" and tray.dashboard_retries == 0
+    assert not tray.dashboard_retry.isActive()
 
 
 def test_the_conversation_shows_in_both_windows(tray):
